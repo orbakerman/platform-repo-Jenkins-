@@ -1,6 +1,8 @@
 pipeline {
-  agent {
-    docker { image 'python:3.12-slim' }
+  agent any
+
+  environment {
+    APP_IMAGE = "calc-app:test"
   }
 
   stages {
@@ -8,7 +10,7 @@ pipeline {
       steps {
         sh '''
           echo "🔨 בונה Docker image..."
-          docker --version
+          docker build -t $APP_IMAGE .
         '''
       }
     }
@@ -16,10 +18,8 @@ pipeline {
     stage('Run tests') {
       steps {
         sh '''
-          echo "📦 מתקין pytest..."
-          pip install --no-cache-dir pytest
           echo "🧪 מריץ טסטים..."
-          pytest -q || exit 1
+          docker run --rm $APP_IMAGE pytest -q || exit 1
         '''
       }
     }
@@ -30,7 +30,7 @@ pipeline {
       echo "✅ Build + Tests הצליחו!"
     }
     failure {
-      echo "❌ Builו Tests ."
+      echo "❌ Build או Tests נכשלו."
     }
   }
 }
