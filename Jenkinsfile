@@ -1,21 +1,26 @@
 pipeline {
   agent none
-  options { timestamps(); ansiColor('xterm') }
+  options { timestamps() }
 
   environment {
     AWS_REGION      = "us-east-1"
     ECR_REPO        = "orbak-app1"
     ACCOUNT_ID      = "992382545251"
     IMAGE_URI       = "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
-    PROD_HOST       = "3.85.84.65"   // ❗ תעדכן ל-IP האמיתי של ה-EC2 פרוד
-    CONTAINER_PORT  = "5000"           // האפליקציה מאזינה בתוך הקונטיינר
-    HOST_PORT       = "80"             // נחשוף החוצה על פורט 80
+    PROD_HOST       = "YOUR.PROD.IP"
+    CONTAINER_PORT  = "5000"
+    HOST_PORT       = "80"
   }
 
   stages {
-
     stage('Prepare Vars') {
-      agent { docker { image 'alpine:3.20' args '-u root' reuseNode true } }
+      agent {
+        docker {
+          image 'alpine:3.20'
+          args '-u root'
+          reuseNode true
+        }
+      }
       steps {
         script {
           env.IS_PR = env.CHANGE_ID ? "true" : "false"
@@ -26,7 +31,13 @@ pipeline {
     }
 
     stage('Checkout') {
-      agent { docker { image 'alpine/git' args '-u root' reuseNode true } }
+      agent {
+        docker {
+          image 'alpine/git'
+          args '-u root'
+          reuseNode true
+        }
+      }
       steps { checkout scm }
     }
 
@@ -108,7 +119,13 @@ pipeline {
 
     stage('Deploy to Production') {
       when { allOf { branch 'master'; expression { env.IS_PR == "false" } } }
-      agent { docker { image 'alpine:3.20' args '-u root -v /root/.ssh:/root/.ssh' reuseNode true } }
+      agent {
+        docker {
+          image 'alpine:3.20'
+          args '-u root -v /root/.ssh:/root/.ssh'
+          reuseNode true
+        }
+      }
       steps {
         sshagent(credentials: ['prod-ec2-ssh']) {
           sh '''
@@ -140,7 +157,13 @@ pipeline {
 
     stage('Health Check') {
       when { allOf { branch 'master'; expression { env.IS_PR == "false" } } }
-      agent { docker { image 'alpine:3.20' args '-u root' reuseNode true } }
+      agent {
+        docker {
+          image 'alpine:3.20'
+          args '-u root'
+          reuseNode true
+        }
+      }
       steps {
         sh '''
           echo "🔍 Checking health endpoint..."
