@@ -3,19 +3,19 @@ pipeline {
   options { timestamps(); ansiColor('xterm') }
 
   environment {
-    AWS_REGION = "us-east-1"
-    ECR_REPO   = "orbak-app1"
-    ACCOUNT_ID = "992382545251"
-    IMAGE_URI  = "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
-    PROD_HOST  = "YOUR.PROD.IP"     // תחליפי ל-IP או DNS של ה־EC2 פרוד
-    CONTAINER_PORT = "8000"         // הפורט של האפליקציה בתוך הקונטיינר
-    HOST_PORT      = "80"           // הפורט החיצוני ב־EC2
+    AWS_REGION      = "us-east-1"
+    ECR_REPO        = "orbak-app1"
+    ACCOUNT_ID      = "992382545251"
+    IMAGE_URI       = "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
+    PROD_HOST       = "YOUR.PROD.IP"   // ❗ תעדכן ל-IP האמיתי של ה-EC2 פרוד
+    CONTAINER_PORT  = "5000"           // האפליקציה מאזינה בתוך הקונטיינר
+    HOST_PORT       = "80"             // נחשוף החוצה על פורט 80
   }
 
   stages {
 
-    stage('Prepare vars') {
-      agent { label 'built-in' }
+    stage('Prepare Vars') {
+      agent { docker { image 'alpine:3.20' args '-u root' reuseNode true } }
       steps {
         script {
           env.IS_PR = env.CHANGE_ID ? "true" : "false"
@@ -25,7 +25,12 @@ pipeline {
       }
     }
 
-    stage('Build Docker image') {
+    stage('Checkout') {
+      agent { docker { image 'alpine/git' args '-u root' reuseNode true } }
+      steps { checkout scm }
+    }
+
+    stage('Build Docker Image') {
       agent {
         docker {
           image 'docker:27.1.2-cli'
@@ -41,7 +46,7 @@ pipeline {
       }
     }
 
-    stage('Run tests') {
+    stage('Run Tests') {
       agent {
         docker {
           image 'python:3.12-slim'
@@ -51,6 +56,7 @@ pipeline {
       }
       steps {
         sh '''
+          echo "🧪 Running tests..."
           pip install --no-cache-dir pytest pytest-cov
           mkdir -p reports
           pytest -q --junitxml=reports/junit.xml
@@ -74,6 +80,7 @@ pipeline {
       }
       steps {
         sh '''
+          echo "⬇️ Installing AWS CLI..."
           apk add --no-cache curl unzip >/dev/null
           TMPDIR=$(mktemp -d)
           curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "$TMPDIR/awscliv2.zip"
@@ -83,12 +90,15 @@ pipeline {
           ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           IMAGE="${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}"
 
+          echo "🔑 Logging in to ECR..."
           aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
 
+          echo "📤 Tagging & pushing image..."
           docker tag ${ECR_REPO}:${IMAGE_TAG} ${IMAGE}
           docker push ${IMAGE}
 
           if [ "${IS_PR}" = "false" ]; then
+            echo "📤 Tagging as latest..."
             docker tag ${IMAGE} ${ECR_REGISTRY}/${ECR_REPO}:latest
             docker push ${ECR_REGISTRY}/${ECR_REPO}:latest
           fi
@@ -98,7 +108,7 @@ pipeline {
 
     stage('Deploy to Production') {
       when { allOf { branch 'master'; expression { env.IS_PR == "false" } } }
-      agent any
+      agent { docker { image 'alpine:3.20' args '-u root -v /root/.ssh:/root/.ssh' reuseNode true } }
       steps {
         sshagent(credentials: ['prod-ec2-ssh']) {
           sh '''
@@ -130,10 +140,10 @@ pipeline {
 
     stage('Health Check') {
       when { allOf { branch 'master'; expression { env.IS_PR == "false" } } }
-      agent any
+      agent { docker { image 'alpine:3.20' args '-u root' reuseNode true } }
       steps {
         sh '''
-          echo "Checking health endpoint..."
+          echo "🔍 Checking health endpoint..."
           ok=0
           for i in $(seq 1 10); do
             code=$(curl -s -o /dev/null -w "%{http_code}" http://${PROD_HOST}/health || true)
@@ -155,3 +165,4 @@ pipeline {
     always { echo "Pipeline finished with status: ${currentBuild.currentResult}" }
   }
 }
+
