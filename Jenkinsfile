@@ -7,7 +7,7 @@ pipeline {
     ECR_REPO        = "orbak-app1"
     ACCOUNT_ID      = "992382545251"
     IMAGE_URI       = "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
-    PROD_HOST       = "YOUR.PROD.IP"
+    PROD_HOST       = "YOUR.PROD.IP"   // Replace with your EC2 production IP or DNS
     CONTAINER_PORT  = "5000"
     HOST_PORT       = "80"
   }
@@ -38,7 +38,9 @@ pipeline {
           reuseNode true
         }
       }
-      steps { checkout scm }
+      steps {
+        checkout scm
+      }
     }
 
     stage('Build Docker Image') {
@@ -51,7 +53,7 @@ pipeline {
       }
       steps {
         sh '''
-          echo "🔨 Building Docker image..."
+          echo "Building Docker image..."
           docker build -t ${ECR_REPO}:${IMAGE_TAG} .
         '''
       }
@@ -67,7 +69,7 @@ pipeline {
       }
       steps {
         sh '''
-          echo "🧪 Running tests..."
+          echo "Running tests..."
           pip install --no-cache-dir pytest pytest-cov
           mkdir -p reports
           pytest -q --junitxml=reports/junit.xml
@@ -91,7 +93,7 @@ pipeline {
       }
       steps {
         sh '''
-          echo "⬇️ Installing AWS CLI..."
+          echo "Installing AWS CLI..."
           apk add --no-cache curl unzip >/dev/null
           TMPDIR=$(mktemp -d)
           curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "$TMPDIR/awscliv2.zip"
@@ -101,15 +103,15 @@ pipeline {
           ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
           IMAGE="${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}"
 
-          echo "🔑 Logging in to ECR..."
+          echo "Logging in to ECR..."
           aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
 
-          echo "📤 Tagging & pushing image..."
+          echo "Pushing image..."
           docker tag ${ECR_REPO}:${IMAGE_TAG} ${IMAGE}
           docker push ${IMAGE}
 
           if [ "${IS_PR}" = "false" ]; then
-            echo "📤 Tagging as latest..."
+            echo "Tagging as latest..."
             docker tag ${IMAGE} ${ECR_REGISTRY}/${ECR_REPO}:latest
             docker push ${ECR_REGISTRY}/${ECR_REPO}:latest
           fi
@@ -137,17 +139,17 @@ pipeline {
             TAG=latest
             ECR="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com"
 
-            echo "🔑 Logging in to ECR..."
+            echo "Logging in to ECR..."
             aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ECR
 
-            echo "📥 Pulling image..."
+            echo "Pulling image..."
             docker pull $ECR/$REPO:$TAG
 
-            echo "🛑 Stopping old container..."
+            echo "Stopping old container..."
             docker stop app || true
             docker rm app || true
 
-            echo "🚀 Running new container..."
+            echo "Running new container..."
             docker run -d --name app --restart unless-stopped -p ${HOST_PORT}:${CONTAINER_PORT} $ECR/$REPO:$TAG
             EOSH
           '''
@@ -166,7 +168,7 @@ pipeline {
       }
       steps {
         sh '''
-          echo "🔍 Checking health endpoint..."
+          echo "Checking health endpoint..."
           ok=0
           for i in $(seq 1 10); do
             code=$(curl -s -o /dev/null -w "%{http_code}" http://${PROD_HOST}/health || true)
@@ -175,10 +177,10 @@ pipeline {
             sleep $((i*2))
           done
           if [ "$ok" -ne 1 ]; then
-            echo "❌ Health check failed"
+            echo "Health check failed"
             exit 1
           fi
-          echo "✅ Health check OK"
+          echo "Health check OK"
         '''
       }
     }
