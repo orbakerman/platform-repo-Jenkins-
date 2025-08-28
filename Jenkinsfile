@@ -7,7 +7,7 @@ pipeline {
     ECR_REPO        = "orbak-app1"
     ACCOUNT_ID      = "992382545251"
     IMAGE_URI       = "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
-    PROD_HOST       = "YOUR.PROD.IP"   // Replace with your EC2 production IP or DNS
+    PROD_HOST       = "3.85.84.65"   // Replace with your EC2 production IP or DNS
     CONTAINER_PORT  = "5000"
     HOST_PORT       = "80"
   }
