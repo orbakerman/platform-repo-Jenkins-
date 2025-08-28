@@ -7,7 +7,7 @@ pipeline {
     ECR_REPO        = "orbak-app1"
     ACCOUNT_ID      = "992382545251"
     IMAGE_URI       = "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
-    PROD_HOST       = "YOUR.PROD.IP"   // ❗ תעדכן ל-IP האמיתי של ה-EC2 פרוד
+    PROD_HOST       = "3.85.84.65"   // ❗ תעדכן ל-IP האמיתי של ה-EC2 פרוד
     CONTAINER_PORT  = "5000"           // האפליקציה מאזינה בתוך הקונטיינר
     HOST_PORT       = "80"             // נחשוף החוצה על פורט 80
   }
