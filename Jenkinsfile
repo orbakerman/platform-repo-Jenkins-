@@ -5,6 +5,11 @@ pipeline {
   environment {
     AWS_REGION = "us-east-1"
     ECR_REPO   = "orbak-app1"
+    ACCOUNT_ID = "992382545251"
+    IMAGE_URI  = "${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}"
+    PROD_HOST  = "YOUR.PROD.IP"     // תחליפי ל-IP או DNS של ה־EC2 פרוד
+    CONTAINER_PORT = "8000"         // הפורט של האפליקציה בתוך הקונטיינר
+    HOST_PORT      = "80"           // הפורט החיצוני ב־EC2
   }
 
   stages {
@@ -13,7 +18,6 @@ pipeline {
       agent { label 'built-in' }
       steps {
         script {
-          // האם זה PR (ב-Multibranch CHANGE_ID קיים ב-PRים)
           env.IS_PR = env.CHANGE_ID ? "true" : "false"
           env.IMAGE_TAG = env.CHANGE_ID ? "pr-${env.CHANGE_ID}-${env.BUILD_NUMBER}" : "build-${env.BUILD_NUMBER}"
           echo "IS_PR=${env.IS_PR}, IMAGE_TAG=${env.IMAGE_TAG}"
@@ -32,14 +36,12 @@ pipeline {
       steps {
         sh '''
           echo "🔨 Building Docker image..."
-          docker version
           docker build -t ${ECR_REPO}:${IMAGE_TAG} .
         '''
       }
     }
 
     stage('Run tests') {
-      // מריצים בדיקות בסביבת Python (לא חייב בתוך ה-image של האפליקציה)
       agent {
         docker {
           image 'python:3.12-slim'
@@ -49,8 +51,6 @@ pipeline {
       }
       steps {
         sh '''
-          python --version
-          pip install --no-cache-dir -r requirements.txt || true
           pip install --no-cache-dir pytest pytest-cov
           mkdir -p reports
           pytest -q --junitxml=reports/junit.xml
@@ -64,7 +64,7 @@ pipeline {
       }
     }
 
-    stage('Login & Push to ECR') {
+    stage('Push to ECR') {
       agent {
         docker {
           image 'docker:27.1.2-cli'
@@ -74,41 +74,84 @@ pipeline {
       }
       steps {
         sh '''
-          set -e
-          echo "🧰 Installing AWS CLI..."
           apk add --no-cache curl unzip >/dev/null
           TMPDIR=$(mktemp -d)
           curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "$TMPDIR/awscliv2.zip"
           unzip -q "$TMPDIR/awscliv2.zip" -d "$TMPDIR"
           $TMPDIR/aws/install -i /usr/local/aws-cli -b /usr/local/bin >/dev/null
-          aws --version
 
-          echo "🔐 Fetching account id..."
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}"
+          IMAGE="${ECR_REGISTRY}/${ECR_REPO}:${IMAGE_TAG}"
 
-          echo "🔑 Logging in to ECR..."
           aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
 
-          echo "🏷️  Tag & Push..."
-          docker tag ${ECR_REPO}:${IMAGE_TAG} ${IMAGE_URI}
-          docker push ${IMAGE_URI}
+          docker tag ${ECR_REPO}:${IMAGE_TAG} ${IMAGE}
+          docker push ${IMAGE}
 
           if [ "${IS_PR}" = "false" ]; then
-            echo "📌 Also tagging :latest for master"
-            docker tag ${IMAGE_URI} ${ECR_REGISTRY}/${ECR_REPO}:latest
+            docker tag ${IMAGE} ${ECR_REGISTRY}/${ECR_REPO}:latest
             docker push ${ECR_REGISTRY}/${ECR_REPO}:latest
           fi
+        '''
+      }
+    }
 
-          echo "✅ Pushed: ${IMAGE_URI}"
+    stage('Deploy to Production') {
+      when { allOf { branch 'master'; expression { env.IS_PR == "false" } } }
+      agent any
+      steps {
+        sshagent(credentials: ['prod-ec2-ssh']) {
+          sh '''
+            ssh -o StrictHostKeyChecking=no ec2-user@${PROD_HOST} "bash -s" <<'EOSH'
+            set -e
+            ACCOUNT_ID=${ACCOUNT_ID}
+            REGION=${AWS_REGION}
+            REPO=${ECR_REPO}
+            TAG=latest
+            ECR="$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com"
+
+            echo "🔑 Logging in to ECR..."
+            aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ECR
+
+            echo "📥 Pulling image..."
+            docker pull $ECR/$REPO:$TAG
+
+            echo "🛑 Stopping old container..."
+            docker stop app || true
+            docker rm app || true
+
+            echo "🚀 Running new container..."
+            docker run -d --name app --restart unless-stopped -p ${HOST_PORT}:${CONTAINER_PORT} $ECR/$REPO:$TAG
+            EOSH
+          '''
+        }
+      }
+    }
+
+    stage('Health Check') {
+      when { allOf { branch 'master'; expression { env.IS_PR == "false" } } }
+      agent any
+      steps {
+        sh '''
+          echo "Checking health endpoint..."
+          ok=0
+          for i in $(seq 1 10); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://${PROD_HOST}/health || true)
+            echo "Attempt $i -> HTTP $code"
+            if [ "$code" = "200" ]; then ok=1; break; fi
+            sleep $((i*2))
+          done
+          if [ "$ok" -ne 1 ]; then
+            echo "❌ Health check failed"
+            exit 1
+          fi
+          echo "✅ Health check OK"
         '''
       }
     }
   }
 
   post {
-    success { echo "✅ Build + Tests + Push ל-ECR הצליחו!" }
-    failure { echo "❌ משהו נכשל בפייפליין." }
+    always { echo "Pipeline finished with status: ${currentBuild.currentResult}" }
   }
 }
